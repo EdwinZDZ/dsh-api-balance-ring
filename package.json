@@ -1,0 +1,11 @@
+{
+  "name": "dsh-api-balance-ring",
+  "version": "1.0.0",
+  "description": "A real-time DeepSeek API balance ring for the DeepSeek Harness composer — hover for the live balance, click for today's spend, requests and tokens, priced per model.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "check": "node scripts/check-plugin.js"
+  }
+}

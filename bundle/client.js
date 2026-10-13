@@ -42,10 +42,17 @@ window.__ModuleLoader__.load({
     const CONFIG = {
       refreshMs: 60000,     // background refresh interval
       tooltipDelayMs: 200,  // hover delay before the tooltip appears
-      // Spend below 60% of budget stays green, 60–90% amber, ≥ 90% red.
+      // Balance modes (account sign-in / API key): ¥50 fills the ring, and the
+      // colour follows the absolute balance — ≥ ¥5 green, ≥ ¥1 amber, < ¥1 red.
+      referenceBalance: 50,
+      warnBelow: 5,
+      dangerBelow: 1,
+      // Metered-spend fallback (no payment source): spend below 60% of the
+      // daily budget stays green, 60–90% amber, ≥ 90% red.
       warnRatio: 0.6,
       dangerRatio: 0.9,
-      // Must match CONFIG.statsPath in ../index.js.
+      // Must match CONFIG.balancePath / CONFIG.statsPath in ../index.js.
+      balancePath: '/__dsh-api-balance-ring/balance',
       statsPath: '/__dsh-api-balance-ring/stats',
     }
 
@@ -84,17 +91,21 @@ window.__ModuleLoader__.load({
 `
 
     /**
-     * Read the Host route. A non-OK reply becomes `{ ok: false }` so the panel
+     * Read one Host route. A non-OK reply becomes `{ ok: false }` so the panel
      * reports a message instead of throwing.
+     * @param {string} path - route to read.
      * @returns {Promise<object>} the decoded payload.
      */
-    async function callHost() {
-      const response = await fetch(CONFIG.statsPath, { cache: 'no-store' })
+    async function callHost(path) {
+      const response = await fetch(path, { cache: 'no-store' })
       if (!response.ok) return { ok: false, error: `HTTP ${response.status}` }
       return await response.json()
     }
 
     function BalanceRing() {
+      // `balance` carries the detected payment mode; `stats` is the metered
+      // spend, used as the ring's subject when no payment source exists.
+      const [balance, setBalance] = React.useState(null)
       const [stats, setStats] = React.useState(null)
       const [open, setOpen] = React.useState(false)
       const [tip, setTip] = React.useState(false)
@@ -102,7 +113,10 @@ window.__ModuleLoader__.load({
       const tipTimer = React.useRef(null)
 
       const refresh = React.useCallback(() => {
-        callHost().then(setStats).catch(() => {
+        callHost(CONFIG.balancePath).then(setBalance).catch(() => {
+          setBalance({ ok: false, error: '余额查询失败' })
+        })
+        callHost(CONFIG.statsPath).then(setStats).catch(() => {
           setStats({ ok: false, error: '用量查询失败' })
         })
       }, [])
@@ -139,24 +153,47 @@ window.__ModuleLoader__.load({
 
       // Render nothing until the first reading arrives (same posture as the
       // built-in context meter, so the ring pops in rather than flashing).
-      if (stats === null) return null
+      if (balance === null) return null
 
-      const ok = stats.ok === true
-      const cost = ok ? Number(stats.costCny) : 0
-      const budget = ok && Number(stats.budgetCny) > 0 ? Number(stats.budgetCny) : 1
-      // The arc is the fraction of today's budget already burned.
-      const percent = Math.max(0, Math.min(100, (cost / budget) * 100))
-      const ratio = cost / budget
-      const health = !ok || ratio < CONFIG.warnRatio ? 'ok'
-        : ratio < CONFIG.dangerRatio ? 'warn' : 'error'
+      const money = (v) => (v < 0 ? '-￥' : '￥') + Math.abs(v).toFixed(2)
+
+      // Which of the two payment modes the harness is on. The Host half
+      // detects it; this half simply follows, so switching between account
+      // sign-in and an API key needs no change here.
+      const mode = balance.ok === true && typeof balance.mode === 'string' ? balance.mode : 'none'
+      const hasBalance = (mode === 'account' || mode === 'api-key') && balance.ok === true
+      const spendOk = stats !== null && stats.ok === true
+      const cost = spendOk ? Number(stats.costCny) : 0
+      const budget = spendOk && Number(stats.budgetCny) > 0 ? Number(stats.budgetCny) : 1
+
+      // The ring's subject follows the mode: the remaining balance when there
+      // is a payment source, otherwise today's spend against the daily budget.
+      let percent, headline, label, health
+      if (hasBalance) {
+        const bal = Number(balance.balance)
+        percent = Math.max(0, Math.min(100, (bal / CONFIG.referenceBalance) * 100))
+        headline = mode === 'account' ? '账户余额' : 'API余额'
+        label = `${headline}${money(bal)}`
+        health = bal >= CONFIG.warnBelow ? 'ok' : (bal >= CONFIG.dangerBelow ? 'warn' : 'error')
+      } else if (mode === 'none' && spendOk) {
+        percent = Math.max(0, Math.min(100, (cost / budget) * 100))
+        headline = '今日用量'
+        label = `今日已消费${money(cost)} / 预算${money(budget)}`
+        const ratio = cost / budget
+        health = ratio < CONFIG.warnRatio ? 'ok' : (ratio < CONFIG.dangerRatio ? 'warn' : 'error')
+      } else {
+        percent = 0
+        headline = 'API余额'
+        label = typeof balance.error === 'string' ? balance.error : '余额获取失败'
+        health = 'error'
+      }
+
       const healthColor = health === 'ok' ? 'var(--dsw-alias-state-success-primary)'
         : health === 'warn' ? 'var(--dsw-alias-state-warn-primary)'
         : 'var(--dsw-alias-state-error-primary)'
-      const money = (v) => '￥' + v.toFixed(2)
       // The inline reading mirrors the context meter's `NN%`, so the two rings
       // sit side by side as `◯6% ◯8%`.
-      const reading = ok ? `${Math.round(percent)}%` : '--'
-      const label = ok ? `今日已消费${money(cost)} / 预算${money(budget)}` : '今日用量获取失败'
+      const reading = (hasBalance || (mode === 'none' && spendOk)) ? `${Math.round(percent)}%` : '--'
 
       const showTip = () => {
         if (open) return
@@ -195,51 +232,57 @@ window.__ModuleLoader__.load({
       }, ring, h('span', null, reading))
 
       const swatch = (cls) => h('span', { className: `dsb-swatch ${cls}`, 'aria-hidden': true })
-      const todayRows = [
+
+      // Which payment mode the Host detected. Shown so the ring visibly follows
+      // the user's setup instead of an assumed source.
+      const modeText = mode === 'account' ? '账号登录' : (mode === 'api-key' ? 'API Key' : '未配置')
+      const rows = [
+        h('div', { key: 'mode', className: 'dsb-row' },
+          h('dt', null, '付款方式'),
+          h('dd', null, modeText),
+        ),
+      ]
+      if (hasBalance) {
+        rows.push(h('div', { key: 'balance', className: 'dsb-row' },
+          h('dt', null, swatch('dsb-swatch-money'), headline),
+          h('dd', null, money(Number(balance.balance))),
+        ))
+      }
+      rows.push(
         h('div', { key: 'cost', className: 'dsb-row' },
           h('dt', null, swatch('dsb-swatch-money'), '今日消费金额'),
-          h('dd', null, ok ? (stats.unpriced === true ? '~' : '') + money(cost) : '--'),
+          h('dd', null, spendOk ? (stats.unpriced === true ? '~' : '') + money(cost) : '--'),
         ),
         h('div', { key: 'reqs', className: 'dsb-row' },
           h('dt', null, swatch('dsb-swatch-reqs'), '今日API请求次数'),
-          h('dd', null, ok ? String(stats.requests) : '--'),
+          h('dd', null, spendOk ? String(stats.requests) : '--'),
         ),
         h('div', { key: 'toks', className: 'dsb-row' },
           h('dt', null, swatch('dsb-swatch-toks'), '今日消耗Tokens'),
-          h('dd', null, ok ? Number(stats.tokens).toLocaleString('zh-CN') : '--'),
+          h('dd', null, spendOk ? Number(stats.tokens).toLocaleString('zh-CN') : '--'),
         ),
-        h('div', { key: 'budget', className: 'dsb-row' },
+      )
+      // The budget only matters when the ring is the spend fallback.
+      if (mode === 'none') {
+        rows.push(h('div', { key: 'budget', className: 'dsb-row' },
           h('dt', null, '日预算'),
-          h('dd', null, ok ? money(budget) : '--'),
-        ),
-      ]
-
-      // MiMo publishes no balance API, so the panel points at the console.
-      const consoleRow = ok && typeof stats.balanceConsoleUrl === 'string'
-        ? h('div', { key: 'console', className: 'dsb-row' },
-          h('dt', null, '账户余额'),
-          h('dd', null,
-            h('a', { className: 'dsb-link', href: stats.balanceConsoleUrl, target: '_blank', rel: 'noreferrer' }, '控制台查看'),
-          ),
-        )
-        : null
+          h('dd', null, spendOk ? money(budget) : '--'),
+        ))
+      }
 
       let panel = null
       if (open) {
-        const rows = ok
-          ? (consoleRow === null ? todayRows : [...todayRows, consoleRow])
-          : [
-            h('div', { key: 'err', className: 'dsb-row dsb-error' },
-              h('dt', null, '查询失败'),
-              h('dd', null, typeof stats.error === 'string' ? stats.error : '未知错误'),
-            ),
-            ...todayRows,
-          ]
-        panel = h('div', { className: 'dsb-panel', role: 'dialog', 'aria-label': '今日用量' },
+        const amount = hasBalance
+          ? money(Number(balance.balance))
+          : (mode === 'none' && spendOk ? money(cost) : '--')
+        const updated = hasBalance && typeof balance.updatedAtText === 'string'
+          ? `更新 ${balance.updatedAtText}`
+          : (spendOk && typeof stats.updatedAtText === 'string' ? `更新 ${stats.updatedAtText}` : '')
+        panel = h('div', { className: 'dsb-panel', role: 'dialog', 'aria-label': headline },
           h('div', { className: 'dsb-header' },
-            h('span', { className: 'dsb-title' }, '今日用量'),
-            h('span', { className: 'dsb-amount' }, ok ? money(cost) : '--'),
-            h('span', { className: 'dsb-figures' }, ok && typeof stats.updatedAtText === 'string' ? `更新 ${stats.updatedAtText}` : ''),
+            h('span', { className: 'dsb-title' }, headline),
+            h('span', { className: 'dsb-amount' }, amount),
+            h('span', { className: 'dsb-figures' }, updated),
           ),
           h('div', { className: 'dsb-bar' },
             h('div', { className: 'dsb-segment', style: { width: `${percent}%`, background: healthColor } }),
@@ -273,7 +316,7 @@ window.__ModuleLoader__.load({
           name: 'conversation.composer.dock',
           id: 'api-balance-ring',
           order: 100,
-          label: '今日用量',
+          label: 'API余额',
         }, BalanceRing))
       },
     }

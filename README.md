@@ -97,14 +97,21 @@ The ring arc = `today's spend ÷ daily budget` (full ring at the budget). Color 
 | Requests / Tokens | Your own **session logs** — every `assistant/message` event carries the real API usage (`inputTokens`, `outputTokens`, `cacheReadTokens`) |
 | Cost | Official MiMo **CNY** per-model pricing, applied per request and per token kind |
 
-### Why the ring shows spend, not a remaining balance
+### How the ring picks its subject — automatic mode detection
 
-MiMo bills an ordinary API key against a prepaid account balance, but the platform publishes **no balance-query API**. That was verified both ways:
+The DSH client pays in one of two ways, and the ring **detects which one you are on** rather than assuming one. Nothing is configured by hand:
 
-- the docs describe token billing and link a *web console* balance page ([定价](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go), [限流](https://mimo.mi.com/docs/zh-CN/api/guidance/rate-limit)) — no balance endpoint anywhere;
-- `GET /v1/models` answers `200` with a valid key, while `/v1/balance`, `/v1/account/balance`, `/v1/dashboard/billing/subscription`, `/v1/credit/grants` and `/v1/user/balance` all answer `404`.
+| Detected mode | How it is detected | The ring shows | Panel label |
+| --- | --- | --- | --- |
+| **账号登录** | `deepseekAccount.getState()` reports `credential-stored`, i.e. 设置 → 账号与余额 is signed in | the **充值余额** from `deepseekAccount.getBalance()` | 账户余额 |
+| **API Key** | no signed-in account, but a `DEEPSEEK_API_KEY` credential is stored | the official `/user/balance` figure | API余额 |
+| **未配置** | neither | **today's spend ÷ daily budget** | 今日用量 |
 
-So the ring measures **today's spend against a daily budget**, which is computable from the session logs alone and needs no external call. The panel links to the console page where the real balance lives.
+Sign-in is checked first because it is the DSH-native mode and needs no credential of ours and no network call of ours — the harness already holds that wallet. The API-key path is the fallback. The detected mode is shown as **付款方式** in the panel so you can see the ring is following your setup.
+
+The account reading is the **充值余额** (the topped-up wallet, `balance.value`). The **赠送余额** (`bonusWallets`) is a separate row in Settings and is deliberately not summed into the ring.
+
+> A third-party provider with no balance API — Xiaomi MiMo, for example — publishes no way to read its balance ([定价](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go) links only a web console; `GET /v1/models` answers `200` while `/v1/balance` and four other candidates answer `404`). When your setup is that kind, the ring falls to the third row above and measures today's spend against the daily budget instead.
 
 ### Pricing table (CNY per 1M tokens — official domestic rates)
 

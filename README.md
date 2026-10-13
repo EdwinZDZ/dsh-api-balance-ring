@@ -1,6 +1,6 @@
 # API Balance Ring · API 余额圆环
 
-**A tiny, real-time DeepSeek API balance meter that lives inside the DeepSeek Harness composer.** Hover the ring for your live balance, click it for today's spend, request count and token consumption — priced per model, straight from your real session logs.
+**A tiny, real-time Xiaomi MiMo spend meter that lives inside the DeepSeek Harness composer.** Hover the ring for today's spend against your daily budget, click it for the spend, request count and token consumption — priced per model at the official CNY rates, straight from your real session logs.
 
 > 🇨🇳 [中文版 README](README.zh-CN.md)
 
@@ -10,12 +10,13 @@
 
 ## ✨ Highlights
 
-- **🔴 Live balance at a glance** — a progress ring sitting immediately to the **right of the built-in context-occupancy ring**, in the same ambient row below the composer, so the two read side by side as `◯6% ◯8%`. Same geometry and theme tokens as that meter. The arc shows your balance against a **¥50 full ring** and shifts green → amber → red as it drains.
-- **🖱 Hover** — see `API余额￥6.45` the moment your cursor touches the ring.
-- **📊 Click** — a breakdown panel with **today's spend, API request count and tokens consumed**, plus an updated-at timestamp. Refreshes every 60 seconds (and on every click).
-- **🧮 Priced per model, not per day** — every request is priced with the official `deepseek-v4-flash` **or** `deepseek-v4-pro` rate recorded in your session log, so switching models mid-session stays accurate.
-- **⏱ Peak / off-peak aware** — the official peak/off-peak pricing schedule (effective 2026-08-16) is built in and switches automatically by request time.
-- **🔒 Provider-filtered** — only requests routed through `deepseek-official` count. Usage from other providers (e.g. an Aliyun pi-ai model) never pollutes your DeepSeek bill.
+- **🔴 Today's spend at a glance** — a progress ring sitting immediately to the **right of the built-in context-occupancy ring**, in the same ambient row below the composer, so the two read side by side as `◯6% ◯8%`. Same geometry and theme tokens as that meter. The arc shows **today's spend against a ¥50 daily budget** and shifts green → amber → red as it fills.
+- **🖱 Hover** — see `今日已消费￥3.23 / 预算￥50` the moment your cursor touches the ring.
+- **📊 Click** — a breakdown panel with **today's spend, API request count and tokens consumed**, the daily budget, and a link to the console page that holds the real account balance. Refreshes every 60 seconds (and on every click).
+- **🧮 Priced per model, not per day** — every request is priced with the official **`mimo-v2.6-flash` / `mimo-v2.6-pro` / `mimo-v2.6-pro-ultraspeed`** rate recorded in your session log, so switching models mid-session stays accurate.
+- **💴 CNY native** — the official domestic rate card is 元 / 1M tokens, so costs are computed in ¥ directly. No USD→CNY conversion, no exchange-rate drift.
+- **⚡ Cache-aware** — prompt-cache hits are billed at their own (much lower) rate, so long agentic sessions price correctly instead of being over-charged at the input rate.
+- **🔒 Provider-filtered** — only requests routed through `xiaomi` count. Usage from any other provider never pollutes your MiMo bill.
 - **🎨 Native look & feel** — same slot, same geometry, same theme tokens as the shipped context-occupancy ring. Zero dependencies, pure JavaScript, no build step.
 
 ## 🖼 Screenshots
@@ -41,15 +42,11 @@ The breakdown panel up close:
 └─────────────────────────────────────────────────────────────────────────┼──────┘
                                                                           │ HTTP
 ┌─────────────────────────────── Host process ────────────────────────────┼──────┐
-│  webServer route /__dsh-api-balance-ring/balance  ◀──────────────────────┘      │
-│    → GET https://api.deepseek.com/user/balance                                  │
-│      (Authorization: Bearer <DEEPSEEK_API_KEY>, global fetch — no shell)        │
-│                                                                                │
-│  webServer route /__dsh-api-balance-ring/usage                                  │
-│    → scan every session log (sessionQuery)                                      │
-│      · count assistant/message events today                                     │
-│      · sum input + output + cache tokens                                        │
-│      · price each request by its model (request/header event) and UTC hour      │
+│  webServer route /__dsh-api-balance-ring/stats   ◀─────────────────────────┘      │
+│    → scan every session log (sessionQuery) — no external call                     │
+│      · count assistant/message events today where provider == xiaomi              │
+│      · sum input + output + cache tokens                                           │
+│      · price each request by its model (request/header event), CNY/1M tokens       │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -58,7 +55,7 @@ The breakdown panel up close:
 ### Prerequisites
 
 - **DeepSeek Harness** (the Web GUI) running locally.
-- A **DeepSeek API key** stored as the `DEEPSEEK_API_KEY` credential — the harness's normal credential store (written from the Models page).
+- A **Xiaomi MiMo API key** — stored in the harness credential store as `XIAOMI_API_KEY`, which is exactly what `llm-pi-ai`'s `providers.xiaomi.apiKeyEnv` already points at. No credential is needed *by the plugin itself*: it reads only your session logs.
 
 ### Steps
 
@@ -86,37 +83,46 @@ The ring appears in the ambient row below the composer, immediately to the right
 
 | Action | Result |
 | --- | --- |
-| Hover the ring | Tooltip with the live balance, e.g. `API余额￥6.45` |
-| Click the ring | Panel: balance + ¥50 progress bar + today's cost / requests / tokens |
+| Hover the ring | Tooltip with today's spend against the budget, e.g. `今日已消费￥3.23 / 预算￥50` |
+| Click the ring | Panel: today's cost / requests / tokens, the daily budget, and a link to the console balance |
 | Click elsewhere / `Esc` | Panel closes |
 | Automatic | Values refresh every 60 s; clicking the ring also refreshes immediately |
 
-The ring arc = `balance ÷ ¥50` (full ring at ¥50). Color thresholds: **≥ ¥5 green**, **≥ ¥1 amber**, **< ¥1 red**.
+The ring arc = `today's spend ÷ daily budget` (full ring at the budget). Color thresholds: **< 60% green**, **< 90% amber**, **≥ 90% red**.
 
 ## 🧮 Data & accuracy
 
 | Stat | Source |
 | --- | --- |
-| Balance | Official `https://api.deepseek.com/user/balance` endpoint, authenticated with your stored `DEEPSEEK_API_KEY` |
 | Requests / Tokens | Your own **session logs** — every `assistant/message` event carries the real API usage (`inputTokens`, `outputTokens`, `cacheReadTokens`) |
-| Cost | Official per-model pricing × request time (flat now, peak/off-peak from 2026-08-16), converted at a fixed USD→CNY rate |
+| Cost | Official MiMo **CNY** per-model pricing, applied per request and per token kind |
 
-### Pricing table (USD per 1M tokens)
+### Why the ring shows spend, not a remaining balance
+
+MiMo bills an ordinary API key against a prepaid account balance, but the platform publishes **no balance-query API**. That was verified both ways:
+
+- the docs describe token billing and link a *web console* balance page ([定价](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go), [限流](https://mimo.mi.com/docs/zh-CN/api/guidance/rate-limit)) — no balance endpoint anywhere;
+- `GET /v1/models` answers `200` with a valid key, while `/v1/balance`, `/v1/account/balance`, `/v1/dashboard/billing/subscription`, `/v1/credit/grants` and `/v1/user/balance` all answer `404`.
+
+So the ring measures **today's spend against a daily budget**, which is computable from the session logs alone and needs no external call. The panel links to the console page where the real balance lives.
+
+### Pricing table (CNY per 1M tokens — official domestic rates)
 
 | Model | Cache-hit input | Cache-miss input | Output |
 | --- | ---: | ---: | ---: |
-| `deepseek-v4-flash` | $0.0028 | $0.14 | $0.28 |
-| `deepseek-v4-pro` | $0.003625 | $0.435 | $0.87 |
+| `mimo-v2.6-flash` · `mimo-v2.5` | ¥0.02 | ¥1.00 | ¥2.00 |
+| `mimo-v2.6-pro` · `mimo-v2.5-pro` | ¥0.025 | ¥3.00 | ¥6.00 |
+| `mimo-v2.6-pro-ultraspeed` | ¥0.25 | ¥30.00 | ¥60.00 |
 
-From **2026-08-16 16:00 UTC**, peak hours (01–04 & 06–10 UTC) charge double the off-peak rates; the plugin selects the rate per request automatically.
+Source: [MiMo API 定价](https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go). Cache **writes** are free for now (`缓存写入：限时免费`) and are therefore not priced. Batch inference is half price, but session logs carry no batch marker, so every request is priced at the real-time rate.
 
 ### What counts
 
-- ✅ Only requests with `provider === 'deepseek-official'` — those are the ones that spend your DeepSeek balance.
-- ✅ Requests whose model is `deepseek-v4-flash` **or** `deepseek-v4-pro` are priced individually, so a mid-session model switch is billed correctly on both sides of the switch.
+- ✅ Only requests with `provider === 'xiaomi'` — those are the ones that spend your MiMo balance.
+- ✅ Requests whose model is `mimo-v2.6-flash`, `mimo-v2.6-pro` **or** `mimo-v2.6-pro-ultraspeed` are priced individually, so a mid-session model switch is billed correctly on both sides of the switch.
 - ✅ "Today" is your local calendar day (00:00 → now).
 - ⚠️ If a request used a model outside the pricing table, the cost shows a `~` prefix — the number is an under-count, never a silent wrong one.
-- ⚠️ The USD→CNY rate is a fixed constant (`6.76`) — official pricing is USD-denominated, so the ¥ figure can drift by ~1% from the platform's own conversion.
+- ⚠️ Batch inference is half price, but session logs carry no batch marker, so batch traffic would be over-counted at the real-time rate.
 
 ## ⚙️ Configuration
 
@@ -124,14 +130,14 @@ Everything lives in the `CONFIG` block at the top of each file.
 
 | Constant | File | Default | Meaning |
 | --- | --- | --- | --- |
-| `referenceBalance` | `bundle/client.js` | `50` | ¥ amount that fills the ring and the bar |
+| `dailyBudgetCny` | `bundle/index.js` | `50` | ¥ budget that fills the ring and the bar |
+| `providers` | `bundle/index.js` | `['xiaomi']` | providers whose requests count toward the meter |
 | `refreshMs` | `bundle/client.js` | `60000` | background refresh interval |
-| `warnBelow` / `dangerBelow` | `bundle/client.js` | `5` / `1` | ring color thresholds (¥) |
+| `warnRatio` / `dangerRatio` | `bundle/client.js` | `0.6` / `0.9` | ring color thresholds (fraction of budget) |
 | `tooltipDelayMs` | `bundle/client.js` | `200` | hover delay before the tooltip |
-| `usdCnyRate` | `bundle/index.js` | `6.76` | USD→CNY conversion for the cost readout |
-| `PRICING` | `bundle/index.js` | — | per-model rate table (add new models here) |
-| `PRICING_EFFECTIVE` | `bundle/index.js` | `2026-08-16T16:00Z` | when peak/off-peak pricing starts |
-| `balancePath` / `usagePath` | both | `/__dsh-api-balance-ring/…` | the two Host routes; the paths must match across the halves |
+| `balanceConsoleUrl` | `bundle/index.js` | MiMo console | where the panel links for the real balance |
+| `PRICING` | `bundle/index.js` | — | per-model rate table in **CNY/1M tokens** (add new models here) |
+| `statsPath` | both | `/__dsh-api-balance-ring/stats` | the Host route; the path must match across the halves |
 
 ## ❓ FAQ
 
@@ -139,9 +145,9 @@ Everything lives in the `CONFIG` block at the top of each file.
 
 **Why is my "today" lower than the platform dashboard?** The plugin reads *your harness's* session logs. Usage from other tools or direct API calls is not in those logs, and small differences in the day boundary can shift the count by a couple of requests.
 
-**Is my API key exposed?** No. The key is resolved from the harness credential store at runtime and exists only in the `Authorization` header of the outgoing request to DeepSeek. It is never written to disk, never placed in a command line, and never sent to the browser — the browser talks only to the local Host routes, which return balance figures, not credentials.
+**Is my API key touched?** No. The plugin never makes an external request — it reads only your local session logs. Your `XIAOMI_API_KEY` is used by the harness's own model adapter and never by this plugin.
 
-**Does it work with `deepseek-v4-pro`?** Yes — that's exactly why pricing is per request. Switch your default model in Settings and the cost readout follows immediately.
+**Does it work with `mimo-v2.6-pro`?** Yes — that's exactly why pricing is per request. Switch your model in the composer and the cost readout follows immediately.
 
 ## 🖥 Compatibility — macOS & Windows
 
@@ -159,15 +165,15 @@ The earlier *dynamic-plugin* form shelled out to `curl` and had to branch on the
 
 ## 🚧 Known limitations
 
-- The USD→CNY rate is a constant, not live-quoted.
-- Usage is aggregated from session logs — it reflects the harness, not your whole API account.
+- MiMo publishes no balance-query API, so the account balance is only visible in the web console (the panel links there).
+- Updating an already-installed copy needs a harness restart: replacing an installed package is what loads a fresh JavaScript module generation, so an in-place edit keeps the old module in memory.
+- Usage is aggregated from session logs — it reflects the harness, not your whole API account (direct API calls and other tools are not counted).
 
 ## 🤝 Contributing
 
 PRs are welcome! Ideas we'd love:
 
-- Live USD→CNY rate via a lightweight quote fetch.
-- A config UI (reference balance, thresholds) instead of code constants.
+- A config UI (daily budget, thresholds) instead of code constants.
 
 Please keep both halves dependency-free — `bundle/index.js` must import nothing, and `bundle/client.js` must stay a plain script that only uses the `require` seed words.
 

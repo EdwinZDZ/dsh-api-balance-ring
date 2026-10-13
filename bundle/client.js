@@ -1,13 +1,18 @@
 /* ============================================================================
- * API Balance Ring · API 余额圆环 — Client half.
+ * API Balance Ring · API 余额圆环 — Client half (Xiaomi MiMo).
  *
  * A bundle Client half is a lazy browser module: `window.__ModuleLoader__.load`
  * registers a factory whose id equals the package name, and `require` resolves
  * the platform seed words (`react`, `@deepseek-ai/cordis`,
  * `@deepseek-ai/dsh-client-ui-slots`, …). `host` is NOT among them — that
  * binding belongs to a *dynamic* package's Client half — so the data is read
- * over the Harness web server routes the Host half registered, the same channel
+ * over the Harness web server route the Host half registered, the same channel
  * the shipped HMR client uses.
+ *
+ * THE RING SHOWS TODAY'S SPEND AGAINST A DAILY BUDGET, not a remaining balance:
+ * MiMo publishes no balance-query API (see the Host half for how that was
+ * verified), so `◯8%` reads "8% of today's budget is burned". The panel links
+ * to the console page where the real account balance lives.
  *
  * The ring renders in the composer's ambient row, immediately to the RIGHT of
  * the built-in context-occupancy ring, so the two read as `◯6% ◯8%`.
@@ -35,14 +40,13 @@ window.__ModuleLoader__.load({
     // ── Configuration ────────────────────────────────────────────────────────
 
     const CONFIG = {
-      referenceBalance: 50, // ¥50 = a full ring and a full bar
       refreshMs: 60000,     // background refresh interval
-      warnBelow: 5,         // balance below this turns the ring amber
-      dangerBelow: 1,       // balance below this turns the ring red
       tooltipDelayMs: 200,  // hover delay before the tooltip appears
-      // Must match CONFIG.balancePath / CONFIG.usagePath in ../index.js.
-      balancePath: '/__dsh-api-balance-ring/balance',
-      usagePath: '/__dsh-api-balance-ring/usage',
+      // Spend below 60% of budget stays green, 60–90% amber, ≥ 90% red.
+      warnRatio: 0.6,
+      dangerRatio: 0.9,
+      // Must match CONFIG.statsPath in ../index.js.
+      statsPath: '/__dsh-api-balance-ring/stats',
     }
 
     // Ring geometry mirrors the shipped context-occupancy meter (14px viewBox,
@@ -73,36 +77,33 @@ window.__ModuleLoader__.load({
 .dsb-swatch-money { background: var(--dsw-alias-state-success-primary); }
 .dsb-swatch-reqs { background: var(--dsw-alias-state-business-primary); }
 .dsb-swatch-toks { background: var(--dsw-static-blue-450); }
+.dsb-link { color: var(--dsw-alias-state-business-primary); text-decoration: none; }
+.dsb-link:hover { text-decoration: underline; }
 .dsb-error { color: var(--dsw-alias-state-error-primary); }
 .dsb-error dd { color: var(--dsw-alias-state-error-primary); }
 `
 
     /**
-     * Read one Host route. A non-OK reply becomes `{ ok: false }` so the panel
+     * Read the Host route. A non-OK reply becomes `{ ok: false }` so the panel
      * reports a message instead of throwing.
-     * @param {string} path - namespaced route path.
      * @returns {Promise<object>} the decoded payload.
      */
-    async function callHost(path) {
-      const response = await fetch(path, { cache: 'no-store' })
+    async function callHost() {
+      const response = await fetch(CONFIG.statsPath, { cache: 'no-store' })
       if (!response.ok) return { ok: false, error: `HTTP ${response.status}` }
       return await response.json()
     }
 
     function BalanceRing() {
-      const [balance, setBalance] = React.useState(null)
-      const [usage, setUsage] = React.useState(null)
+      const [stats, setStats] = React.useState(null)
       const [open, setOpen] = React.useState(false)
       const [tip, setTip] = React.useState(false)
       const rootRef = React.useRef(null)
       const tipTimer = React.useRef(null)
 
       const refresh = React.useCallback(() => {
-        callHost(CONFIG.balancePath).then(setBalance).catch(() => {
-          setBalance({ ok: false, error: '余额查询失败' })
-        })
-        callHost(CONFIG.usagePath).then(setUsage).catch(() => {
-          setUsage({ ok: false, error: '用量查询失败' })
+        callHost().then(setStats).catch(() => {
+          setStats({ ok: false, error: '用量查询失败' })
         })
       }, [])
 
@@ -136,25 +137,26 @@ window.__ModuleLoader__.load({
         }
       }, [open])
 
-      // Render nothing until the first balance arrives (same posture as the
+      // Render nothing until the first reading arrives (same posture as the
       // built-in context meter, so the ring pops in rather than flashing).
-      if (balance === null) return null
+      if (stats === null) return null
 
-      const ok = balance.ok === true
-      const bal = ok ? Number(balance.balance) : 0
-      const currency = ok && typeof balance.currency === 'string' ? balance.currency : 'CNY'
-      const symbol = currency === 'CNY' ? '￥' : (currency === 'USD' ? '$' : currency + ' ')
-      const money = (v) => symbol + v.toFixed(2)
-      const percent = Math.max(0, Math.min(100, (bal / CONFIG.referenceBalance) * 100))
-      const health = !ok || bal >= CONFIG.warnBelow ? 'ok'
-        : bal >= CONFIG.dangerBelow ? 'warn' : 'error'
+      const ok = stats.ok === true
+      const cost = ok ? Number(stats.costCny) : 0
+      const budget = ok && Number(stats.budgetCny) > 0 ? Number(stats.budgetCny) : 1
+      // The arc is the fraction of today's budget already burned.
+      const percent = Math.max(0, Math.min(100, (cost / budget) * 100))
+      const ratio = cost / budget
+      const health = !ok || ratio < CONFIG.warnRatio ? 'ok'
+        : ratio < CONFIG.dangerRatio ? 'warn' : 'error'
       const healthColor = health === 'ok' ? 'var(--dsw-alias-state-success-primary)'
         : health === 'warn' ? 'var(--dsw-alias-state-warn-primary)'
         : 'var(--dsw-alias-state-error-primary)'
+      const money = (v) => '￥' + v.toFixed(2)
       // The inline reading mirrors the context meter's `NN%`, so the two rings
       // sit side by side as `◯6% ◯8%`.
       const reading = ok ? `${Math.round(percent)}%` : '--'
-      const label = ok ? `API余额${money(bal)}` : 'API余额获取失败'
+      const label = ok ? `今日已消费${money(cost)} / 预算${money(budget)}` : '今日用量获取失败'
 
       const showTip = () => {
         if (open) return
@@ -192,39 +194,52 @@ window.__ModuleLoader__.load({
         onMouseLeave: hideTip,
       }, ring, h('span', null, reading))
 
-      const usageOk = usage !== null && usage.ok === true
       const swatch = (cls) => h('span', { className: `dsb-swatch ${cls}`, 'aria-hidden': true })
       const todayRows = [
         h('div', { key: 'cost', className: 'dsb-row' },
           h('dt', null, swatch('dsb-swatch-money'), '今日消费金额'),
-          h('dd', null, usageOk ? (usage.unpriced === true ? '~' : '') + money(Number(usage.costCny)) : '--'),
+          h('dd', null, ok ? (stats.unpriced === true ? '~' : '') + money(cost) : '--'),
         ),
         h('div', { key: 'reqs', className: 'dsb-row' },
           h('dt', null, swatch('dsb-swatch-reqs'), '今日API请求次数'),
-          h('dd', null, usageOk ? String(usage.requests) : '--'),
+          h('dd', null, ok ? String(stats.requests) : '--'),
         ),
         h('div', { key: 'toks', className: 'dsb-row' },
           h('dt', null, swatch('dsb-swatch-toks'), '今日消耗Tokens'),
-          h('dd', null, usageOk ? Number(usage.tokens).toLocaleString('zh-CN') : '--'),
+          h('dd', null, ok ? Number(stats.tokens).toLocaleString('zh-CN') : '--'),
+        ),
+        h('div', { key: 'budget', className: 'dsb-row' },
+          h('dt', null, '日预算'),
+          h('dd', null, ok ? money(budget) : '--'),
         ),
       ]
+
+      // MiMo publishes no balance API, so the panel points at the console.
+      const consoleRow = ok && typeof stats.balanceConsoleUrl === 'string'
+        ? h('div', { key: 'console', className: 'dsb-row' },
+          h('dt', null, '账户余额'),
+          h('dd', null,
+            h('a', { className: 'dsb-link', href: stats.balanceConsoleUrl, target: '_blank', rel: 'noreferrer' }, '控制台查看'),
+          ),
+        )
+        : null
 
       let panel = null
       if (open) {
         const rows = ok
-          ? todayRows
+          ? (consoleRow === null ? todayRows : [...todayRows, consoleRow])
           : [
             h('div', { key: 'err', className: 'dsb-row dsb-error' },
               h('dt', null, '查询失败'),
-              h('dd', null, typeof balance.error === 'string' ? balance.error : '未知错误'),
+              h('dd', null, typeof stats.error === 'string' ? stats.error : '未知错误'),
             ),
             ...todayRows,
           ]
-        panel = h('div', { className: 'dsb-panel', role: 'dialog', 'aria-label': 'API余额' },
+        panel = h('div', { className: 'dsb-panel', role: 'dialog', 'aria-label': '今日用量' },
           h('div', { className: 'dsb-header' },
-            h('span', { className: 'dsb-title' }, 'API余额'),
-            h('span', { className: 'dsb-amount' }, ok ? money(bal) : '--'),
-            h('span', { className: 'dsb-figures' }, ok && typeof balance.updatedAtText === 'string' ? `更新 ${balance.updatedAtText}` : ''),
+            h('span', { className: 'dsb-title' }, '今日用量'),
+            h('span', { className: 'dsb-amount' }, ok ? money(cost) : '--'),
+            h('span', { className: 'dsb-figures' }, ok && typeof stats.updatedAtText === 'string' ? `更新 ${stats.updatedAtText}` : ''),
           ),
           h('div', { className: 'dsb-bar' },
             h('div', { className: 'dsb-segment', style: { width: `${percent}%`, background: healthColor } }),
@@ -258,7 +273,7 @@ window.__ModuleLoader__.load({
           name: 'conversation.composer.dock',
           id: 'api-balance-ring',
           order: 100,
-          label: 'API余额',
+          label: '今日用量',
         }, BalanceRing))
       },
     }

@@ -48,9 +48,8 @@ const CONFIG = {
   balanceEndpoint: 'https://api.deepseek.com/user/balance',
   requestTimeoutMs: 12000,
 
-  // ── Spend (the ring's subject when neither payment mode is configured) ──
-  // Only requests routed through these providers spend a metered balance.
-  providers: ['xiaomi'],
+  // ── Spend (the ring's subject when the active provider's balance cannot be
+  //    read) ──
   // Daily budget the spend ring measures today's spend against, in ¥.
   dailyBudgetCny: 50,
   // Where the account balance can be read by a human.
@@ -76,6 +75,49 @@ const PRICING = {
   'mimo-v2.6-pro': { cacheHit: 0.025, input: 3.0, output: 6.0 },
   'mimo-v2.5-pro': { cacheHit: 0.025, input: 3.0, output: 6.0 },
   'mimo-v2.6-pro-ultraspeed': { cacheHit: 0.25, input: 30.0, output: 60.0 },
+}
+
+/**
+ * The providers whose requests the table above is authoritative for.
+ *
+ * This binding is deliberate and explicit: `PRICING` is Xiaomi MiMo's rate
+ * card and nobody else's. A request from a different provider is still counted,
+ * but it is never priced with these numbers — billing a DeepSeek account call
+ * at MiMo's rates would silently misstate the cost, and an `unpriced` flag is
+ * a better answer than a wrong number.
+ */
+const MIMO_PROVIDERS = ['xiaomi']
+
+/**
+ * The rate for one request, or null when this provider's rates are not known.
+ * @param {string} provider - provider id from the request header.
+ * @param {string} model - model id from the request header.
+ * @returns {{cacheHit:number,input:number,output:number}|null}
+ */
+function pricingFor(provider, model) {
+  if (!MIMO_PROVIDERS.includes(provider)) return null
+  return PRICING[model] ?? null
+}
+
+/**
+ * The provider the composer is pointed at — the same reading the payment-mode
+ * detection uses, so the spend meter and the balance follow one another.
+ * @param {{get(name:string):any}} services - the injected Cordis services.
+ * @returns {string} the provider id, or '' when it cannot be read.
+ */
+function activeProvider(services) {
+  try {
+    const agentDefaultModel = services.get('agentDefaultModel')
+    if (agentDefaultModel !== undefined && agentDefaultModel !== null) {
+      const selection = agentDefaultModel.currentSelection()
+      if (selection !== null && selection !== undefined && typeof selection.provider === 'string') {
+        return selection.provider
+      }
+    }
+  } catch {
+    // Report an empty provider; the caller decides what that means.
+  }
+  return ''
 }
 
 // ── Balance ──────────────────────────────────────────────────────────────────
@@ -186,21 +228,9 @@ function modeForProvider(provider) {
  * @returns {Promise<{mode:string,provider:string,balance?:number,currency?:string}>}
  */
 async function readBalance(services) {
-  // The provider the composer is pointed at. A local read of the saved
-  // selection, so detection costs nothing before the balance is fetched.
-  let provider = ''
-  try {
-    const agentDefaultModel = services.get('agentDefaultModel')
-    if (agentDefaultModel !== undefined && agentDefaultModel !== null) {
-      const selection = agentDefaultModel.currentSelection()
-      if (selection !== null && selection !== undefined && typeof selection.provider === 'string') {
-        provider = selection.provider
-      }
-    }
-  } catch {
-    // Leave provider empty and probe both DeepSeek modes below.
-  }
-
+  // The provider the composer is pointed at — the same reading the spend meter
+  // uses, so both follow the model the user is on.
+  const provider = activeProvider(services)
   const mode = provider === '' ? '' : modeForProvider(provider)
 
   // 1. DSH account sign-in.
@@ -223,13 +253,22 @@ async function readBalance(services) {
 // ── Today's spend ────────────────────────────────────────────────────────────
 
 /**
- * Aggregate today's real usage from every session log. Each request is priced
- * with the rate recorded in the most recent request/header event, so switching
- * between mimo-v2.6-flash and mimo-v2.6-pro mid-session stays correct.
+ * Aggregate today's real usage from every session log.
+ *
+ * Only the active provider's requests are counted — the meter follows the model
+ * the composer is pointed at, the same way the balance does — and each request
+ * is priced with the rate recorded in its own request/header event, so
+ * switching between mimo-v2.6-flash and mimo-v2.6-pro mid-session stays
+ * correct.
+ *
+ * Pricing is applied only where a rate card actually exists: see
+ * `pricingFor`, which returns null for any provider other than Xiaomi MiMo.
+ *
  * @param {object} sessionQuery - the `sessionQuery` Cordis service.
+ * @param {string} activeProviderId - provider to count; '' counts every provider.
  * @returns {Promise<{requests:number,tokens:number,costCny:number,unpriced:boolean}>}
  */
-async function readTodaySpend(sessionQuery) {
+async function readTodaySpend(sessionQuery, activeProviderId) {
   const sessions = await sessionQuery.listSessions()
   const now = new Date()
   const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
@@ -256,15 +295,17 @@ async function readTodaySpend(sessionQuery) {
         }
         if (ev.type !== 'assistant/message') continue
         if (ev.time < dayStart) continue
-        if (!CONFIG.providers.includes(provider)) continue
+        if (activeProviderId !== '' && provider !== activeProviderId) continue
         const usage = ev.data && ev.data.usage
         if (usage === undefined) continue
         requests += 1
         input += usage.inputTokens || 0
         output += usage.outputTokens || 0
         cache += usage.cacheReadTokens || 0
-        const p = PRICING[model]
-        if (p === undefined) {
+        // Only a provider with a known rate card is priced; anything else is
+        // counted and flagged rather than costed at somebody else's rates.
+        const p = pricingFor(provider, model)
+        if (p === null) {
           unpriced = true
         } else {
           cny += ((usage.cacheReadTokens || 0) / 1e6) * p.cacheHit
@@ -340,9 +381,11 @@ export function apply(ctx) {
     handler: (req, res) => {
       void (async () => {
         try {
+          const provider = activeProvider(services)
           sendJson(res, {
             ok: true,
-            ...(await readTodaySpend(ctx.get('sessionQuery'))),
+            ...(await readTodaySpend(ctx.get('sessionQuery'), provider)),
+            provider,
             budgetCny: CONFIG.dailyBudgetCny,
             balanceConsoleUrl: CONFIG.balanceConsoleUrl,
             updatedAtText: new Date().toLocaleTimeString('zh-CN', { hour12: false }),

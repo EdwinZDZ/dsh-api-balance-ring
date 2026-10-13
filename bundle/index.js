@@ -153,40 +153,71 @@ async function readApiKeyBalance(credentials) {
 }
 
 /**
+ * Classify a model provider id into the payment mode behind it.
+ *
+ * This is the crux: whether a DeepSeek account happens to be signed in says
+ * nothing about who is paying. The composer may be pointed at a third-party
+ * provider with its own API key — Xiaomi MiMo, for instance — while a DSH
+ * account sits signed-in and unused. What decides the mode is the provider the
+ * harness is actually calling.
+ *
+ * @param {string} provider - provider id from the current model selection.
+ * @returns {'account'|'api-key'|'third-party'}
+ */
+function modeForProvider(provider) {
+  if (/^deepseek-account/.test(provider)) return 'account'
+  if (/^deepseek/.test(provider)) return 'api-key'
+  return 'third-party'
+}
+
+/**
  * Which payment mode the harness is actually set up for.
  *
- * The DSH client pays in one of two ways — a signed-in account (设置 → 账号与
- * 余额) or a `DEEPSEEK_API_KEY` — and the ring has to follow whichever the user
- * is on rather than assume one. Sign-in is checked first because it is the
- * native DSH mode and needs no credential of ours; an API key is used when no
- * account is signed in. When neither is present the caller falls back to the
- * metered-spend ring, which needs no payment source at all.
+ * Detection follows the provider the composer is pointed at, so switching the
+ * model switches the ring with it:
+ *
+ *   account      provider `deepseek-account` → the 充值余额 via
+ *                `deepseekAccount.getBalance()`.
+ *   api-key      provider `deepseek*` → the official `/user/balance` endpoint.
+ *   third-party  anything else (MiMo, …) → that provider's balance is not
+ *                readable, so the caller falls back to the metered-spend ring.
  *
  * @param {{get(name:string):any}} services - the injected Cordis services.
- * @returns {Promise<{mode:'account'|'api-key'|'none',balance?:number,currency?:string}>}
+ * @returns {Promise<{mode:string,provider:string,balance?:number,currency?:string}>}
  */
 async function readBalance(services) {
-  // 1. Account sign-in: `getState()` is a local read of the stored credential,
-  //    so detection costs nothing before the balance itself is fetched.
-  const deepseekAccount = services.get('deepseekAccount')
-  if (deepseekAccount !== undefined && deepseekAccount !== null) {
-    try {
-      const state = await deepseekAccount.getState()
-      if (state !== null && state.status === 'credential-stored') {
-        const account = await readAccountBalance(deepseekAccount)
-        if (account !== null) return { mode: 'account', ...account }
+  // The provider the composer is pointed at. A local read of the saved
+  // selection, so detection costs nothing before the balance is fetched.
+  let provider = ''
+  try {
+    const agentDefaultModel = services.get('agentDefaultModel')
+    if (agentDefaultModel !== undefined && agentDefaultModel !== null) {
+      const selection = agentDefaultModel.currentSelection()
+      if (selection !== null && selection !== undefined && typeof selection.provider === 'string') {
+        provider = selection.provider
       }
-    } catch {
-      // Fall through to the API-key mode.
     }
+  } catch {
+    // Leave provider empty and probe both DeepSeek modes below.
   }
 
-  // 2. API key.
-  const apiKey = await readApiKeyBalance(services.get('credentials'))
-  if (apiKey !== null) return { mode: 'api-key', ...apiKey }
+  const mode = provider === '' ? '' : modeForProvider(provider)
 
-  // 3. Neither: the caller falls back to the metered-spend ring.
-  return { mode: 'none' }
+  // 1. DSH account sign-in.
+  if (mode === 'account' || mode === '') {
+    const account = await readAccountBalance(services.get('deepseekAccount'))
+    if (account !== null) return { mode: 'account', provider, ...account }
+  }
+
+  // 2. DeepSeek API key.
+  if (mode === 'api-key' || mode === '') {
+    const apiKey = await readApiKeyBalance(services.get('credentials'))
+    if (apiKey !== null) return { mode: 'api-key', provider, ...apiKey }
+  }
+
+  // 3. A third-party provider whose balance cannot be read. The caller falls
+  //    back to the metered-spend ring, which needs no payment source.
+  return { mode: 'third-party', provider }
 }
 
 // ── Today's spend ────────────────────────────────────────────────────────────
@@ -274,7 +305,7 @@ function sendJson(res, payload) {
 
 // Declared up front so the plugin parks instead of throwing in a profile that
 // lacks one of these services.
-export const inject = ['credentials', 'deepseekAccount', 'sessionQuery', 'webServer']
+export const inject = ['agentDefaultModel', 'credentials', 'deepseekAccount', 'sessionQuery', 'webServer']
 
 /**
  * Register the read-only routes the browser half fetches.

@@ -157,17 +157,20 @@ window.__ModuleLoader__.load({
 
       const money = (v) => (v < 0 ? '-￥' : '￥') + Math.abs(v).toFixed(2)
 
-      // Which of the two payment modes the harness is on. The Host half
-      // detects it; this half simply follows, so switching between account
-      // sign-in and an API key needs no change here.
-      const mode = balance.ok === true && typeof balance.mode === 'string' ? balance.mode : 'none'
+      // Which payment mode the Host detected. The Host follows the provider the
+      // composer is pointed at, so switching the model switches the ring with
+      // it — being signed in to a DSH account does not hijack the meter of a
+      // third-party provider that is actually being called.
+      const mode = balance.ok === true && typeof balance.mode === 'string' ? balance.mode : 'third-party'
       const hasBalance = (mode === 'account' || mode === 'api-key') && balance.ok === true
+      const provider = balance.ok === true && typeof balance.provider === 'string' ? balance.provider : ''
       const spendOk = stats !== null && stats.ok === true
       const cost = spendOk ? Number(stats.costCny) : 0
       const budget = spendOk && Number(stats.budgetCny) > 0 ? Number(stats.budgetCny) : 1
 
-      // The ring's subject follows the mode: the remaining balance when there
-      // is a payment source, otherwise today's spend against the daily budget.
+      // The ring's subject follows the mode: the remaining balance when the
+      // provider's balance can be read, otherwise today's spend against the
+      // daily budget — which needs no payment source at all.
       let percent, headline, label, health
       if (hasBalance) {
         const bal = Number(balance.balance)
@@ -175,7 +178,7 @@ window.__ModuleLoader__.load({
         headline = mode === 'account' ? '账户余额' : 'API余额'
         label = `${headline}${money(bal)}`
         health = bal >= CONFIG.warnBelow ? 'ok' : (bal >= CONFIG.dangerBelow ? 'warn' : 'error')
-      } else if (mode === 'none' && spendOk) {
+      } else if (mode === 'third-party' && spendOk) {
         percent = Math.max(0, Math.min(100, (cost / budget) * 100))
         headline = '今日用量'
         label = `今日已消费${money(cost)} / 预算${money(budget)}`
@@ -193,7 +196,7 @@ window.__ModuleLoader__.load({
         : 'var(--dsw-alias-state-error-primary)'
       // The inline reading mirrors the context meter's `NN%`, so the two rings
       // sit side by side as `◯6% ◯8%`.
-      const reading = (hasBalance || (mode === 'none' && spendOk)) ? `${Math.round(percent)}%` : '--'
+      const reading = (hasBalance || (mode === 'third-party' && spendOk)) ? `${Math.round(percent)}%` : '--'
 
       const showTip = () => {
         if (open) return
@@ -235,7 +238,9 @@ window.__ModuleLoader__.load({
 
       // Which payment mode the Host detected. Shown so the ring visibly follows
       // the user's setup instead of an assumed source.
-      const modeText = mode === 'account' ? '账号登录' : (mode === 'api-key' ? 'API Key' : '未配置')
+      const modeText = mode === 'account' ? '账号登录'
+        : mode === 'api-key' ? 'API Key'
+          : (provider !== '' ? `${provider} API Key` : '第三方')
       const rows = [
         h('div', { key: 'mode', className: 'dsb-row' },
           h('dt', null, '付款方式'),
@@ -263,7 +268,7 @@ window.__ModuleLoader__.load({
         ),
       )
       // The budget only matters when the ring is the spend fallback.
-      if (mode === 'none') {
+      if (mode === 'third-party') {
         rows.push(h('div', { key: 'budget', className: 'dsb-row' },
           h('dt', null, '日预算'),
           h('dd', null, spendOk ? money(budget) : '--'),
@@ -274,7 +279,7 @@ window.__ModuleLoader__.load({
       if (open) {
         const amount = hasBalance
           ? money(Number(balance.balance))
-          : (mode === 'none' && spendOk ? money(cost) : '--')
+          : (mode === 'third-party' && spendOk ? money(cost) : '--')
         const updated = hasBalance && typeof balance.updatedAtText === 'string'
           ? `更新 ${balance.updatedAtText}`
           : (spendOk && typeof stats.updatedAtText === 'string' ? `更新 ${stats.updatedAtText}` : '')

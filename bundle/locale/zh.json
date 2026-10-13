@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "API 余额圆环",
-    "description": "在输入框的上下文圆环旁实时显示 DeepSeek API 余额。悬停查看余额，点击查看今日消费、请求次数与 Tokens 消耗 —— 按模型计价，自动区分峰谷时段，macOS 与 Windows 通用。"
+    "description": "紧挨输入框上下文圆环的实时小仪表。自动识别你当前实际在用的付费方式 —— DSH 账号登录、DeepSeek API Key 或第三方 provider —— 并据此显示余额；provider 没有余额接口时，改为显示今日消费与日预算。按模型以官方人民币价计价，macOS 与 Windows 通用。"
   }
 }

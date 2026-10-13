@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-api-balance-ring",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
-  "description": "Real-time DeepSeek API balance ring beside the composer's context meter — hover for the live balance, click for today's spend / requests / tokens, priced per model (flash & pro, peak/off-peak aware).",
+  "description": "A real-time meter beside the composer's context ring. It detects which payment source you are actually on — a signed-in DSH account, a DeepSeek API key, or a third-party provider — and shows that balance, falling back to today's spend against a daily budget when the provider publishes no balance API. Priced per model at official CNY rates, macOS and Windows alike.",
   "icon": "./icon.svg",
   "exports": {
     ".": "./index.js",

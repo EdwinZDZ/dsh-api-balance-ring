@@ -1,0 +1,7 @@
+# The balance ring's single plugin row. It is inserted at the root scope, so it
+# lands in Settings → 内置插件 → 全局插件 and is enabled by default on every
+# launch: nothing here sets `disabled`, so the row resolves enabled.
+- insert:
+    - id: api-balance-ring
+      name: '@local/dsh-api-balance-ring'
+      config: {}

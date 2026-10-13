@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "API Balance Ring",
+    "description": "A real-time DeepSeek API balance ring beside the composer's context meter. Hover for the live balance, click for today's spend, request count and tokens — priced per model, peak/off-peak aware, macOS and Windows alike."
+  }
+}

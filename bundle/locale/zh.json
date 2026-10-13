@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "API 余额圆环",
+    "description": "在输入框的上下文圆环旁实时显示 DeepSeek API 余额。悬停查看余额，点击查看今日消费、请求次数与 Tokens 消耗 —— 按模型计价，自动区分峰谷时段，macOS 与 Windows 通用。"
+  }
+}

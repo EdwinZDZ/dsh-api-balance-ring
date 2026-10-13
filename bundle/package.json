@@ -1,0 +1,30 @@
+{
+  "name": "@local/dsh-api-balance-ring",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Real-time DeepSeek API balance ring beside the composer's context meter — hover for the live balance, click for today's spend / requests / tokens, priced per model (flash & pro, peak/off-peak aware).",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

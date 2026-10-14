@@ -5,3 +5,9 @@ Thumbs.db
 
 # Node
 node_modules/
+
+__pycache__/
+*.pyc
+assets/capture-still.png
+assets/demo.mp4
+assets/.palette.png

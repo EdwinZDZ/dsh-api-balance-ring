@@ -19,15 +19,18 @@
 - **⚡ Cache-aware** — prompt-cache hits are billed at their own (much lower) rate, so long agentic sessions price correctly instead of being over-charged at the input rate.
 - **🎨 Native look & feel** — same slot, same geometry, same theme tokens as the shipped context-occupancy ring. Zero dependencies, pure JavaScript, no build step.
 
-## 🖼 Screenshots
+## 🖼 Preview
 
-The three states — idle, hover, and the click-open panel:
+> These are rendered illustrations of the three modes, **not screen captures**.
+> A real capture is being recorded and will replace them.
 
-![Idle · Hover · Panel](assets/hero-strip.png)
+The three payment modes the ring detects and adapts to — **账号登录** (balance), **API Key** (balance), and **第三方** (today's spend against a budget):
 
-The breakdown panel up close:
+![Account · API key · third-party](assets/hero-strip.png)
 
-![Panel](assets/panel.png)
+The breakdown panels up close — note the **付款方式** row, which names the provider the ring is following:
+
+![Balance panel · Spend panel](assets/panel.png)
 
 ## 🧩 How it works
 
